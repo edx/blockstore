@@ -1,9 +1,3 @@
-# openedx.yaml
-
----
-owner:
-    type: team
-    team: edx/teaching-and-learning
 tags:
     - backend-service  # End users access LMS/Studio which in turn make requests to Blockstore
 openedx-release: {ref: master}
