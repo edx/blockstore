@@ -64,7 +64,7 @@ static:  ## Collect static files
 	${VENV_BIN}/python manage.py collectstatic --noinput
 
 test: clean ## Run tests and generate coverage report
-	${VENV_BIN}/coverage run ./manage.py test blockstore tagstore --settings=blockstore.settings.test
+	${VENV_BIN}/coverage run ./manage.py test blockstore --settings=blockstore.settings.test
 	${VENV_BIN}/coverage html
 	${VENV_BIN}/coverage xml
 	${VENV_BIN}/diff-cover coverage.xml --html-report diff-cover.html
@@ -89,9 +89,8 @@ html_coverage: ## Generate HTML coverage report
 	${VENV_BIN}/coverage html
 
 quality: ## Run quality checks
-	${VENV_BIN}/pycodestyle --config=pycodestyle blockstore tagstore *.py
-	${VENV_BIN}/pylint --rcfile=pylintrc blockstore tagstore *.py
-	${VENV_BIN}/mypy --config-file tagstore/mypy.ini tagstore
+	${VENV_BIN}/pycodestyle --config=pycodestyle blockstore *.py
+	${VENV_BIN}/pylint --rcfile=pylintrc blockstore *.py
 
 validate: test quality ## Run tests and quality checks
 

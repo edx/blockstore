@@ -3,7 +3,6 @@ branch = True
 data_file = .coverage
 source=
     blockstore
-    tagstore
 omit =
     blockstore/settings*
     blockstore/conf*

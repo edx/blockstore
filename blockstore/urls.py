@@ -34,7 +34,6 @@ urlpatterns = oauth2_urlpatterns + [
     url(r'^api-auth/', include((oauth2_urlpatterns, 'auth_backends'), namespace='rest_framework')),
     url(r'^auto_auth/$', core_views.AutoAuth.as_view(), name='auto_auth'),
     url(r'^health/$', core_views.health, name='health'),
-    url(r'^tagstore/', include('tagstore.tagstore_rest.urls', namespace='tagstore')),
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
 if settings.DEBUG:  # pragma: no cover
