@@ -9,7 +9,7 @@ import uuid
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('bundles', '0001_initial'),
+        ('blockstore_apps_bundles', '0001_initial'),
     ]
 
     operations = [
@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
                 ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('name', models.CharField(max_length=180)),
-                ('bundle', models.ForeignKey(editable=False, on_delete=django.db.models.deletion.CASCADE, related_name='drafts', related_query_name='draft', to='bundles.Bundle')),
+                ('bundle', models.ForeignKey(editable=False, on_delete=django.db.models.deletion.CASCADE, related_name='drafts', related_query_name='draft', to='blockstore_apps_bundles.Bundle')),
             ],
         ),
         migrations.AlterUniqueTogether(

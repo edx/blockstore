@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
                 ('version_num', models.PositiveIntegerField(editable=False)),
                 ('snapshot_digest', models.CharField(db_index=True, editable=False, max_length=40)),
                 ('change_description', models.TextField(blank=True, max_length=1000)),
-                ('bundle', models.ForeignKey(editable=False, on_delete=django.db.models.deletion.CASCADE, related_name='versions', related_query_name='version', to='bundles.Bundle')),
+                ('bundle', models.ForeignKey(editable=False, on_delete=django.db.models.deletion.CASCADE, related_name='versions', related_query_name='version', to='blockstore_apps_bundles.Bundle')),
             ],
         ),
         migrations.CreateModel(
@@ -52,7 +52,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='bundle',
             name='collection',
-            field=models.ForeignKey(editable=False, on_delete=django.db.models.deletion.CASCADE, related_name='bundles', related_query_name='bundle', to='bundles.Collection'),
+            field=models.ForeignKey(editable=False, on_delete=django.db.models.deletion.CASCADE, related_name='bundles', related_query_name='bundle', to='blockstore_apps_bundles.Collection'),
         ),
         migrations.AlterUniqueTogether(
             name='bundleversion',
