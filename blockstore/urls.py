@@ -28,7 +28,7 @@ admin.autodiscover()
 
 urlpatterns = oauth2_urlpatterns + [
     url(r'^admin/', admin.site.urls),
-    url(r'^api/', include('blockstore.apps.api.urls', namespace='api')),
+    url(r'^api/', include('blockstore.apps.rest_api.urls', namespace='api')),
     url(r'^api-docs/', get_swagger_view(title='blockstore API')),
     # Use the same auth views for all logins, including those originating from the browseable API.
     url(r'^api-auth/', include((oauth2_urlpatterns, 'auth_backends'), namespace='rest_framework')),

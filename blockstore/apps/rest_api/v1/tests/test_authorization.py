@@ -1,7 +1,7 @@
 """
 Tests to check that the API is only accessible by superusers or authorized
 application service users. See
-    blockstore.apps.api.permissions.IsSuperUserOrAuthorizedApplication
+    blockstore.apps.rest_api.permissions.IsSuperUserOrAuthorizedApplication
 for details.
 """
 from django.contrib.auth import get_user_model

@@ -26,7 +26,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from blockstore.apps.bundles.tests.storage_utils import isolate_test_storage
-from blockstore.apps.api.constants import UUID4_REGEX
+from blockstore.apps.rest_api.constants import UUID4_REGEX
 from .helpers import (
     create_bundle_with_history, encode_str_for_draft, response_str_file, response_data
 )
