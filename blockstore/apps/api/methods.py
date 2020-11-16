@@ -7,10 +7,19 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 import dateutil.parser
-from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 import requests
 import six
+
+from blockstore.apps.bundles import models
+from blockstore.apps.bundles.links import LinkCycleError
+from blockstore.apps.bundles.store import DraftRepo, SnapshotRepo
+from blockstore.apps.rest_api.v1.serializers.drafts import (
+    DraftFileUpdateSerializer,
+    DraftSerializer,
+    DraftWithFileDataSerializer,
+)
+
 
 from .models import (
     Bundle,
@@ -31,78 +40,8 @@ from .exceptions import (
 )
 
 
-def api_url(*path_parts):
-    if not settings.BLOCKSTORE_API_URL or not settings.BLOCKSTORE_API_URL.endswith('/api/v1/'):
-        raise ImproperlyConfigured('BLOCKSTORE_API_URL must be set and should end with /api/v1/')
-    return settings.BLOCKSTORE_API_URL + '/'.join(path_parts)
-
-
-def api_request(method, url, **kwargs):
-    """
-    Helper method for making a request to the Blockstore REST API
-    """
-    if not settings.BLOCKSTORE_API_AUTH_TOKEN:
-        raise ImproperlyConfigured("Cannot use Blockstore unless BLOCKSTORE_API_AUTH_TOKEN is set.")
-    kwargs.setdefault('headers', {})['Authorization'] = "Token {}".format(settings.BLOCKSTORE_API_AUTH_TOKEN)
-    response = requests.request(method, url, **kwargs)
-    if response.status_code == 404:
-        raise NotFound
-    response.raise_for_status()
-    if response.status_code == 204:
-        return None  # No content
-    return response.json()
-
-
-def _collection_from_response(data):
-    """
-    Given data about a Collection returned by any blockstore REST API, convert it to
-    a Collection instance.
-    """
-    return Collection(uuid=UUID(data['uuid']), title=data['title'])
-
-
-def _bundle_from_response(data):
-    """
-    Given data about a Bundle returned by any blockstore REST API, convert it to
-    a Bundle instance.
-    """
-    return Bundle(
-        uuid=UUID(data['uuid']),
-        title=data['title'],
-        description=data['description'],
-        slug=data['slug'],
-        # drafts: Convert from a dict of URLs to a dict of UUIDs:
-        drafts={draft_name: UUID(url.split('/')[-1]) for (draft_name, url) in data['drafts'].items()},
-        # versions field: take the last one and convert it from URL to an int
-        # i.e.: [..., 'https://blockstore/api/v1/bundle_versions/bundle_uuid,15'] -> 15
-        latest_version=int(data['versions'][-1].split(',')[-1]) if data['versions'] else 0,
-    )
-
-
-def _draft_from_response(data):
-    """
-    Given data about a Draft returned by any blockstore REST API, convert it to
-    a Draft instance.
-    """
-    return Draft(
-        uuid=UUID(data['uuid']),
-        bundle_uuid=UUID(data['bundle_uuid']),
-        name=data['name'],
-        updated_at=dateutil.parser.parse(data['staged_draft']['updated_at']),
-        files={
-            path: DraftFile(path=path, **file)
-            for path, file in data['staged_draft']['files'].items()
-        },
-        links={
-            name: DraftLinkDetails(
-                name=name,
-                direct=LinkReference(**link["direct"]),
-                indirect=[LinkReference(**ind) for ind in link["indirect"]],
-                modified=link["modified"],
-            )
-            for name, link in data['staged_draft']['links'].items()
-        }
-    )
+def _data_from_collection(collection):
+    return Collection(uuid=collection.uuid, title=collection.title)
 
 
 def get_collection(collection_uuid):
@@ -113,18 +52,23 @@ def get_collection(collection_uuid):
     """
     assert isinstance(collection_uuid, UUID)
     try:
-        data = api_request('get', api_url('collections', str(collection_uuid)))
-    except NotFound:
+        collection = models.Collection.objects.get(uuid=collection_uuid)
+    except models.Collection.DoesNotExist:
         raise CollectionNotFound("Collection {} does not exist.".format(collection_uuid))
-    return _collection_from_response(data)
+
+    return _data_from_collection(collection)
 
 
 def create_collection(title):
     """
     Create a new collection.
     """
-    result = api_request('post', api_url('collections'), json={"title": title})
-    return _collection_from_response(result)
+    collection = models.Collection(
+        title=title
+    )
+    collection.save()
+
+    return _data_from_collection(collection)
 
 
 def update_collection(collection_uuid, title):
@@ -132,9 +76,14 @@ def update_collection(collection_uuid, title):
     Update a collection's title
     """
     assert isinstance(collection_uuid, UUID)
-    data = {"title": title}
-    result = api_request('patch', api_url('collections', str(collection_uuid)), json=data)
-    return _collection_from_response(result)
+    try:
+        collection = models.Collection.objects.get(uuid=collection_uuid)
+    except models.Collection.DoesNotExist:
+        raise CollectionNotFound("Collection {} does not exist.".format(collection_uuid))
+
+    collection.title = title
+    collection.save()
+    return _data_from_collection(collection)
 
 
 def delete_collection(collection_uuid):
@@ -142,7 +91,24 @@ def delete_collection(collection_uuid):
     Delete a collection
     """
     assert isinstance(collection_uuid, UUID)
-    api_request('delete', api_url('collections', str(collection_uuid)))
+    try:
+        collection = models.Collection.objects.get(uuid=collection_uuid)
+    except models.Collection.DoesNotExist:
+        raise CollectionNotFound("Collection {} does not exist.".format(collection_uuid))
+
+    collection.delete()
+
+
+def _data_from_bundle(bundle):
+    latest_bundle_version = bundle.get_bundle_version()
+    return Bundle(
+        uuid=bundle.uuid,
+        title=bundle.title,
+        description=bundle.description,
+        slug=bundle.slug,
+        drafts={draft.name: draft.uuid for draft in bundle.drafts.all()},
+        latest_version=latest_bundle_version.version_num if latest_bundle_version else 0,
+    )
 
 
 def get_bundles(uuids=None, text_search=None):
@@ -168,10 +134,11 @@ def get_bundle(bundle_uuid):
     """
     assert isinstance(bundle_uuid, UUID)
     try:
-        data = api_request('get', api_url('bundles', str(bundle_uuid)))
-    except NotFound:
+        bundle = models.Bundle.objects.get(uuid=bundle_uuid)
+    except models.Bundle.DoesNotExist:
         raise BundleNotFound("Bundle {} does not exist.".format(bundle_uuid))
-    return _bundle_from_response(data)
+
+    return _data_from_bundle(bundle)
 
 
 def create_bundle(collection_uuid, slug, title="New Bundle", description=""):
@@ -180,13 +147,20 @@ def create_bundle(collection_uuid, slug, title="New Bundle", description=""):
 
     Note that description is currently required.
     """
-    result = api_request('post', api_url('bundles'), json={
-        "collection_uuid": str(collection_uuid),
-        "slug": slug,
-        "title": title,
-        "description": description,
-    })
-    return _bundle_from_response(result)
+    assert isinstance(collection_uuid, UUID)
+    try:
+        collection = models.Collection.objects.get(uuid=collection_uuid)
+    except models.Collection.DoesNotExist:
+        raise CollectionNotFound("Collection {} does not exist.".format(collection_uuid))
+
+    bundle = models.Bundle(
+        title=title,
+        collection=collection,
+        slug=slug,
+        description=description,
+    )
+    bundle.save()
+    return _data_from_bundle(bundle)
 
 
 def update_bundle(bundle_uuid, **fields):
@@ -194,17 +168,29 @@ def update_bundle(bundle_uuid, **fields):
     Update a bundle's title, description, slug, or collection.
     """
     assert isinstance(bundle_uuid, UUID)
+    try:
+        bundle = models.Bundle.objects.get(uuid=bundle_uuid)
+    except models.Bundle.DoesNotExist:
+        raise BundleNotFound("Bundle {} does not exist.".format(bundle_uuid))
+
     data = {}
     # Most validation will be done by Blockstore, so we don't worry too much about data validation
     for str_field in ("title", "description", "slug"):
         if str_field in fields:
-            data[str_field] = fields.pop(str_field)
+            setattr(bundle, str_field, fields.pop(str_field))
     if "collection_uuid" in fields:
-        data["collection_uuid"] = str(fields.pop("collection_uuid"))
+        collection_uuid = str(fields.pop("collection_uuid"))
+        assert isinstance(collection_uuid, UUID)
+        try:
+            collection = models.Collection.objects.get(uuid=collection_uuid)
+        except models.Collection.DoesNotExist:
+            raise CollectionNotFound("Collection {} does not exist.".format(collection_uuid))
+        bundle.collection = collection
     if fields:
         raise ValueError("Unexpected extra fields passed to update_bundle: {}".format(fields.keys()))
-    result = api_request('patch', api_url('bundles', str(bundle_uuid)), json=data)
-    return _bundle_from_response(result)
+
+    bundle.save()
+    return _data_from_bundle(bundle)
 
 
 def delete_bundle(bundle_uuid):
@@ -212,7 +198,45 @@ def delete_bundle(bundle_uuid):
     Delete a bundle
     """
     assert isinstance(bundle_uuid, UUID)
-    api_request('delete', api_url('bundles', str(bundle_uuid)))
+    try:
+        bundle = models.Bundle.objects.get(uuid=bundle_uuid)
+    except models.Bundle.DoesNotExist:
+        raise BundleNotFound("Bundle {} does not exist.".format(bundle_uuid))
+    bundle.delete()
+
+
+def _data_from_draft(draft):
+    """
+    Given data about a Draft returned by any blockstore REST API, convert it to
+    a Draft instance.
+    """
+    return Draft(
+        uuid=draft.uuid,
+        bundle_uuid=draft.bundle.uuid,
+        name=draft.name,
+        updated_at=draft.staged_draft.updated_at,
+        files={
+            path: DraftFile(
+                path=path,
+                size=file_info.size,
+                url=path,  ## Todo
+                hash_digest=file_info.hash_digest,
+                modified=path in draft.staged_draft.files_to_overwrite,
+            )
+            for path, file_info in draft.staged_draft.files.items()
+        },
+        links={}
+        # Todo
+        # links={
+        #     name: DraftLinkDetails(
+        #         name=name,
+        #         direct=LinkReference(**link["direct"]),
+        #         indirect=[LinkReference(**ind) for ind in link["indirect"]],
+        #         modified=link["modified"],
+        #     )
+        #     for name, link in draft.staged_draft.composed_links.items()
+        # }
+    )
 
 
 def get_draft(draft_uuid):
@@ -222,27 +246,34 @@ def get_draft(draft_uuid):
     """
     assert isinstance(draft_uuid, UUID)
     try:
-        data = api_request('get', api_url('drafts', str(draft_uuid)))
-    except NotFound:
+        draft = models.Draft.objects.get(uuid=draft_uuid)
+    except models.Draft.DoesNotExist:
         raise DraftNotFound("Draft does not exist: {}".format(draft_uuid))
-    return _draft_from_response(data)
+
+    return _data_from_draft(draft)
 
 
 def get_or_create_bundle_draft(bundle_uuid, draft_name):
     """
     Retrieve metadata about the specified draft.
     """
-    bundle = get_bundle(bundle_uuid)
+    assert isinstance(bundle_uuid, UUID)
     try:
-        return get_draft(bundle.drafts[draft_name])  # pylint: disable=unsubscriptable-object
-    except KeyError:
+        bundle = models.Bundle.objects.get(uuid=bundle_uuid)
+    except models.Bundle.DoesNotExist:
+        raise BundleNotFound("Bundle {} does not exist.".format(bundle_uuid))
+
+    try:
+        draft = models.Draft.objects.get(bundle=bundle, name=draft_name)
+    except models.Draft.DoesNotExist:
         # The draft doesn't exist yet, so create it:
-        response = api_request('post', api_url('drafts'), json={
-            "bundle_uuid": str(bundle_uuid),
-            "name": draft_name,
-        })
-        # The result of creating a draft doesn't include all the fields we want, so retrieve it now:
-        return get_draft(UUID(response["uuid"]))
+        draft = models.Draft(
+            bundle=bundle,
+            name=draft_name,
+        )
+        draft.save()
+
+    return _data_from_draft(draft)
 
 
 def commit_draft(draft_uuid):
@@ -380,11 +411,21 @@ def write_draft_file(draft_uuid, path, contents):
 
     Does not return anything.
     """
-    api_request('patch', api_url('drafts', str(draft_uuid)), json={
+    data = {
         'files': {
             path: encode_str_for_draft(contents) if contents is not None else None,
         },
-    })
+    }
+    serializer = DraftFileUpdateSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    files_to_write = serializer.validated_data['files']
+    dependencies_to_write = serializer.validated_data['links']
+
+    draft_repo = DraftRepo(SnapshotRepo())
+    try:
+        draft_repo.update(draft_uuid, files_to_write, dependencies_to_write)
+    except LinkCycleError:
+        raise serializers.ValidationError("Link cycle detected: Cannot create draft.")
 
 
 def set_draft_link(draft_uuid, link_name, bundle_uuid, version):
@@ -414,20 +455,3 @@ def encode_str_for_draft(input_str):
     else:
         binary = input_str
     return base64.b64encode(binary)
-
-
-def force_browser_url(blockstore_file_url):
-    """
-    Ensure that the given URL Blockstore is a URL accessible from the end user's
-    browser.
-    """
-    # Hack: on some devstacks, we must necessarily use different URLs for
-    # accessing Blockstore file data from within and outside of docker
-    # containers, but Blockstore has no way of knowing which case any particular
-    # request is for. So it always returns a URL suitable for use from within
-    # the container. Only this edxapp can transform the URL at the last second,
-    # knowing that in this case it's going to the user's browser and not being
-    # read by edxapp.
-    # In production, the same S3 URLs get used for internal and external access
-    # so this hack is not necessary.
-    return blockstore_file_url.replace('http://edx.devstack.blockstore:', 'http://localhost:')
